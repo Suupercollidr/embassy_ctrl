@@ -1,0 +1,64 @@
+#pragma once
+#include <HTTPClient.h>
+#include <esp_system.h>
+#include <Arduino.h>
+
+const char dataFileName[] = "/datalog2.csv";
+const char logFileName[] = "/system.log";
+
+const char *ssid = "SSID";
+const char *password ="Passphrase";
+
+const char *otaUsername = "ota_username";
+const char *otaPassword = "ota_password";
+
+const char *NTP_SERVER1 = "ntp1.sp.se";
+const char *NTP_SERVER2 = "ntp2.sp.se";
+const char *NTP_SERVER3 = "pool.ntp.org";
+const char *TIME_ZONE = "CET-1CEST-2,M3.5.0/02:00:00,M10.5.0/03:00:00";
+const int NTP_SYNC_INTERVAL = 6;   // hours
+
+// IPAddress for DNS servers
+IPAddress primaryDNS(8, 8, 8, 8);   // Google primary DNS
+IPAddress secondaryDNS(8, 8, 4, 4); // Google secondary DNS
+
+#define INFLUXDB_URL "http://1.2.3.4:8086"
+#define INFLUXDB_TOKEN "TOKEN"
+#define INFLUXDB_ORG "ORG"
+#define INFLUXDB_DATA_BUCKET "Bucket" // It's pronounced 'Bucket'
+#define INFLUXDB_LOG_BUCKET "Log bucket"
+
+// MQTT
+const char *MQTT_HOST = "0.0.0.0";
+const char *MQTT_USER = "USER"; 
+const char *MQTT_PASS = "PASS";
+const char *camera_command_topic = "home/security/cameras/command";
+const char *camera_state_topic = "home/security/cameras/state";
+
+// MAC address for transmitting ESP32 (greenhouse)
+uint8_t transmitterMAC[] = {MAC};
+
+
+const int UPDATE_INTERVAL = 5; // How often to send data, in seconds
+const int INV_OFF_VOLTAGE = 11000; // mV
+const int INV_ON_VOLTAGE = 13000;  // mV
+const int INV_RETRY_PERIOD = 1800; // seconds
+
+
+// Define pins
+#define SD_DET 16
+#define RXD1 26
+#define TXD1 27
+#define RXD2 17
+#define TXD2 25
+#define DHT_PIN 33
+#define NTC1_READ_PIN A7 // Pin, to which the voltage divider is connected
+#define NTC2_READ_PIN A6 // Pin, to which the voltage divider is connected
+#define NTC_POWER_PIN 32 // 3.3V for the voltage divider
+#define RELAY_INV 5
+#define RELAY_LIGHT 23
+#define RELAY_CAM 19
+#define RELAY_AUX 18
+#define LED_CAM_BUTTON 27
+#define CAM_BUTTON 34 // (A6) Connect to GND through switch
+
