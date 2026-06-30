@@ -39,6 +39,8 @@ const int INV_OFF_VOLTAGE = 11000; // mV
 const int INV_ON_VOLTAGE = 13000;  // mV
 const int INV_RETRY_PERIOD = 1800; // seconds
 
+#define ONBOARD_BUTTON 0
+#define ONBOARD_LED 38
 #define RELAY_INV 15
 #define RELAY_LIGHT 16
 #define RELAY_CAM 17

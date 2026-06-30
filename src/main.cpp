@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ESP32Ping.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
 #include <AsyncMqttClient.h>
@@ -10,8 +11,8 @@
 #include <InfluxDbCloud.h>
 #include "debounce.h"
 #include "EventLogger.h"
-// #include "configuration.h"
-#include "dev_configuration.h"
+#include "configuration.h"
+//#include "dev_configuration.h"
 
 WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
@@ -21,7 +22,8 @@ EventLogger eventLog(influxLogClient, -1);
 
 Debounce WiFiConnectTimeout(30000); // Used for both intial connect and reconnect period
 Debounce MQTTReconnect(10000);
-Debounce privacyButtonDebounce;
+Debounce onboardButtonDebounce(500);
+Debounce privacyButtonDebounce(500);
 Debounce inverterPowerChangeInterval(INV_RETRY_PERIOD * 1000);
 Debounce NTPSyncInterval(NTP_SYNC_INTERVAL * 3600000);
 
@@ -31,11 +33,13 @@ enum powerSwitch
   ON
 };
 
+bool onboardLEDState;
+volatile bool onboardButtonPushed;
+volatile bool privacyButtonPushed;
+volatile powerSwitch cameraTarget = ON;
+powerSwitch cameraState = ON;
 powerSwitch inverterPowerState = ON;
 powerSwitch xmasLightState = OFF;
-powerSwitch cameraState = ON;
-volatile powerSwitch cameraTarget = ON;
-volatile bool privacyButtonPushed;
 
 void initWiFi();
 void reconnectWiFi();
@@ -49,6 +53,8 @@ void controlLight();
 void controlCamera();
 void IRAM_ATTR privacyButtonPush();
 void privacyButtonAction();
+void IRAM_ATTR onboardButtonPush();
+void onboardButtonAction();
 
 void setup()
 {
@@ -58,6 +64,8 @@ void setup()
   Serial.println(" System is starting ");
   Serial.println("====================");
 
+  pinMode(ONBOARD_BUTTON, INPUT_PULLUP);
+  pinMode(ONBOARD_LED, OUTPUT);
   pinMode(RELAY_INV, OUTPUT);
   pinMode(RELAY_LIGHT, OUTPUT);
   pinMode(RELAY_CAM, OUTPUT);
@@ -65,6 +73,7 @@ void setup()
   pinMode(LED_PRIVACY_BUTTON, OUTPUT);
   pinMode(PRIVACY_BUTTON, INPUT_PULLUP);
 
+  attachInterrupt(digitalPinToInterrupt(ONBOARD_BUTTON), onboardButtonPush, FALLING);
   attachInterrupt(digitalPinToInterrupt(PRIVACY_BUTTON), privacyButtonPush, FALLING);
 
   // Make sure relay positions match the corresponding power switch
@@ -72,7 +81,7 @@ void setup()
   digitalWrite(RELAY_LIGHT, (xmasLightState == ON) ? HIGH : LOW); // NO
   digitalWrite(RELAY_CAM, (cameraState == ON) ? LOW : HIGH);      // NC
   digitalWrite(RELAY_AUX, LOW);
-  digitalWrite(LED_PRIVACY_BUTTON, LOW);
+  digitalWrite(LED_PRIVACY_BUTTON, (cameraState == ON) ? LOW : HIGH);
 
   initWiFi();
 
@@ -107,6 +116,9 @@ void loop()
 
   localWebServer.handleClient();
   ElegantOTA.loop();
+
+  if (onboardButtonPushed)
+    onboardButtonAction();
 
   if (privacyButtonPushed)
     privacyButtonAction();
@@ -335,6 +347,30 @@ void controlCamera()
     Serial.println(cameraTarget);
     break;
   }
+}
+
+void IRAM_ATTR onboardButtonPush()
+{
+  if (onboardButtonDebounce.ready())
+    onboardButtonPushed = true;
+}
+
+void onboardButtonAction()
+{
+  onboardButtonPushed = false;
+  Serial.println("========== DIAGNOSTIK ==========");
+  Serial.println("Uptime:       " + String(millis() / 1000) + " s");
+  Serial.println("WiFi:         " + String(WiFi.isConnected() ? "Ansluten" : "Frånkopplad"));
+  Serial.println("WiFi-signal:  " + String(WiFi.RSSI()) + " dBm");
+  Serial.println("MQTT:         " + String(mqttClient.connected() ? "Ansluten" : "Frånkopplad"));
+  Serial.println("Fri heap:     " + String(ESP.getFreeHeap()) + " bytes");
+  Serial.println("Kamera:       " + String(cameraState == ON ? "ON" : "OFF"));
+  Serial.println("----- Ping -----");
+  Serial.println("Gateway:      " + String(Ping.ping(WiFi.gatewayIP()) ? "OK" : "FAIL"));
+  Serial.println("Primär DNS:   " + String(Ping.ping(primaryDNS) ? "OK" : "FAIL"));
+  Serial.println("Sekundär DNS: " + String(Ping.ping(secondaryDNS) ? "OK" : "FAIL"));
+  Serial.println("MQTT-broker:  " + String(Ping.ping(MQTT_HOST) ? "OK" : "FAIL"));
+  Serial.println("================================");
 }
 
 void IRAM_ATTR privacyButtonPush()
