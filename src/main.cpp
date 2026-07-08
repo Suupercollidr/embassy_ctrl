@@ -41,8 +41,6 @@ powerSwitch cameraState = ON;
 powerSwitch inverterPowerState = ON;
 powerSwitch xmasLightState = OFF;
 
-void initWiFi();
-void reconnectWiFi();
 void reconnectMqtt();
 void onMqttConnect(bool sessionPresent);
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
@@ -83,9 +81,7 @@ void setup()
   digitalWrite(RELAY_AUX, LOW);
   digitalWrite(LED_PRIVACY_BUTTON, (cameraState == ON) ? LOW : HIGH);
 
-  internetConnectionManager.begin(ssid, password, hostname);
-
-  // initWiFi();
+  internetConnectionManager.begin(ssid, password, hostname, channel);
 
   timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
