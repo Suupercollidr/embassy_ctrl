@@ -12,7 +12,7 @@
 #include "debounce.h"
 #include "EventLogger.h"
 #include "configuration.h"
-//#include "dev_configuration.h"
+// #include "dev_configuration.h"
 
 WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
@@ -89,7 +89,8 @@ void setup()
 
   // OTA
   localWebServer.on("/", []()
-                    { localWebServer.send(200, "text/plain", "Tere tulemast Eesti saatkonda!"); });
+                    { String websiteContents = "<html><head><title>Eesti saatkonda</title></head><body><h1>Tere tulemast Eesti saatkonda!</h1><p>Jaotis: " + String(hostname) + "</p></body></html>";
+                      localWebServer.send(200, "text/plain", websiteContents); });
   ElegantOTA.setAuth(otaUsername, otaPassword);
   ElegantOTA.begin(&localWebServer);
   localWebServer.begin();
