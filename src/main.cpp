@@ -10,6 +10,7 @@
 #include <InfluxDbClient.h>
 #include <InfluxDbCloud.h>
 #include "debounce.h"
+#include "ConnectionManager.h"
 #include "EventLogger.h"
 #include "configuration.h"
 // #include "dev_configuration.h"
@@ -17,10 +18,9 @@
 WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
 InfluxDBClient influxLogClient(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_LOG_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
-
 EventLogger eventLog(influxLogClient, -1);
+ConnectionManager internetConnectionManager(eventLog, primaryDNS, secondaryDNS);
 
-Debounce WiFiConnectTimeout(30000); // Used for both intial connect and reconnect period
 Debounce MQTTReconnect(10000);
 Debounce onboardButtonDebounce(500);
 Debounce privacyButtonDebounce(500);
@@ -83,7 +83,9 @@ void setup()
   digitalWrite(RELAY_AUX, LOW);
   digitalWrite(LED_PRIVACY_BUTTON, (cameraState == ON) ? LOW : HIGH);
 
-  initWiFi();
+  internetConnectionManager.begin(ssid, password, hostname);
+
+  // initWiFi();
 
   timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
@@ -109,8 +111,7 @@ void setup()
 
 void loop()
 {
-  if (!WiFi.isConnected())
-    reconnectWiFi();
+  internetConnectionManager.loop();
 
   if (!mqttClient.connected())
     reconnectMqtt();
@@ -130,62 +131,6 @@ void loop()
     timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
   yield();
-}
-
-void initWiFi() // Connect to WiFi
-{
-  eventLog.log(String("Ansluter till WiFi " + String(ssid)), EventLogger::LogLevel::INFO);
-  eventLog.log(String("MAC-adress: " + WiFi.macAddress()), EventLogger::LogLevel::INFO);
-
-  WiFi.setHostname(hostname);
-  WiFi.begin(ssid, password, 6);
-  while (!WiFi.isConnected())
-  {
-    if (WiFiConnectTimeout.ready())
-    {
-      Serial.println("💥  ");
-      eventLog.log("Kunde inte ansluta till WiFi, startar om", EventLogger::LogLevel::ERROR);
-      ESP.restart();
-    }
-    delay(100);
-    Serial.print("🛜  ");
-  }
-  IPAddress myIp = WiFi.localIP();
-  const String myIpString = String(myIp[0]) + "." +
-                            String(myIp[1]) + "." +
-                            String(myIp[2]) + "." +
-                            String(myIp[3]);
-
-  IPAddress gwIp = WiFi.gatewayIP();
-  const String gwIpString = String(gwIp[0]) + "." +
-                            String(gwIp[1]) + "." +
-                            String(gwIp[2]) + "." +
-                            String(gwIp[3]);
-
-  Serial.println();
-  eventLog.log("Ansluten till WiFi " + String(ssid), EventLogger::LogLevel::INFO);
-  Serial.flush();
-  Serial.println("\t\t\t\t\tKanal    \t" + WiFi.channel());
-  Serial.println("\t\t\t\t\tIP-adress\t" + myIpString);
-  Serial.println("\t\t\t\t\tGateway  \t" + gwIpString);
-
-  Point netStat("Network");
-  netStat.addField("Channel", WiFi.channel());
-  netStat.addField("Hostname", WiFi.getHostname());
-  netStat.addField("IP address", myIpString);
-  netStat.addField("Gateway", gwIpString);
-  netStat.addField("MAC address", WiFi.macAddress());
-
-  influxLogClient.writePoint(netStat);
-}
-
-void reconnectWiFi()
-{
-  if (!WiFiConnectTimeout.ready())
-    return;
-
-  eventLog.log("Återansluter till WiFi", EventLogger::LogLevel::INFO);
-  WiFi.reconnect();
 }
 
 void reconnectMqtt()
