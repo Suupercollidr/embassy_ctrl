@@ -6,6 +6,7 @@
 const char *ssid = "MY_SSID";
 const char *password = "MY_WIFI_PASSWORD";
 const char *hostname = "MY_ESP32_HOSTNAME";
+const int32_t channel = 6;  
 
 const char *otaUsername = "OTA_USERNAME";
 const char *otaPassword = "OTA_PASSWORD";
