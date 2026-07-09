@@ -13,7 +13,7 @@
 #include "ConnectionManager.h"
 #include "EventLogger.h"
 #include "configuration.h"
-// #include "dev_configuration.h"
+//#include "dev_configuration.h"
 
 WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
@@ -87,7 +87,7 @@ void setup()
 
   // OTA
   localWebServer.on("/", []()
-                    { String websiteContents = "<html><head><title>Eesti saatkonda</title></head><body><h1>Tere tulemast Eesti saatkonda!</h1><p>Jaotis: " + String(hostname) + "</p></body></html>";
+                    { String websiteContents = "Tere tulemast Eesti saatkonda!\nJaotis: " + String(hostname);
                       localWebServer.send(200, "text/plain", websiteContents); });
   ElegantOTA.setAuth(otaUsername, otaPassword);
   ElegantOTA.begin(&localWebServer);
@@ -99,7 +99,10 @@ void setup()
   mqttClient.onMessage(onMqttMessage);
   mqttClient.setCredentials(MQTT_USER, MQTT_PASS);
   mqttClient.setServer(MQTT_HOST, 1883);
+  mqttClient.setWill(esp32_status_topic, 1, true, "offline");
   mqttClient.connect();
+
+  delay(1000);
 
   float setupTime = millis() / 1000.0f;
   eventLog.log(String("Systemet startat. Uppstarten tog " + String(setupTime) + " s."), EventLogger::LogLevel::INFO);
@@ -144,6 +147,8 @@ void reconnectMqtt()
 void onMqttConnect(bool sessionPresent)
 {
   uint16_t packetId = mqttClient.subscribe(camera_command_topic, 1);
+  mqttClient.publish(esp32_status_topic, 1, true, "online");
+  mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF"); 
 
   eventLog.log("MQTT: Ansluten till broker", EventLogger::LogLevel::INFO);
   eventLog.log(String("MQTT: Prenumererar på " + String(camera_command_topic)), EventLogger::LogLevel::INFO);

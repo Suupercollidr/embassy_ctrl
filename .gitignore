@@ -5,3 +5,4 @@
 .vscode/ipch
 src/configuration.h
 src/dev_configuration.h
+platformio.ini

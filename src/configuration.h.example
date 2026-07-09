@@ -34,7 +34,7 @@ const char *MQTT_PASS = "MQTT_PASSWORD";
 // MQTT topics
 const char *camera_command_topic = "home/security/cameras/command";
 const char *camera_state_topic = "home/security/cameras/state";
-
+const char *esp32_status_topic = "home/automation/esp32/status";
 
 const int INV_OFF_VOLTAGE = 11000; // mV
 const int INV_ON_VOLTAGE = 13000;  // mV
