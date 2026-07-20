@@ -13,7 +13,7 @@
 #include "ConnectionManager.h"
 #include "EventLogger.h"
 #include "configuration.h"
-//#include "dev_configuration.h"
+// #include "dev_configuration.h"
 
 WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
@@ -22,6 +22,8 @@ EventLogger eventLog(influxLogClient, -1);
 ConnectionManager internetConnectionManager(eventLog, primaryDNS, secondaryDNS);
 
 Debounce MQTTReconnect(10000);
+u_int8_t mqttReconnectAttempts = 0;
+u_int8_t maxMqttReconnectAttempts = 50;
 Debounce onboardButtonDebounce(500);
 Debounce privacyButtonDebounce(500);
 Debounce inverterPowerChangeInterval(INV_RETRY_PERIOD * 1000);
@@ -81,7 +83,7 @@ void setup()
   digitalWrite(RELAY_AUX, LOW);
   digitalWrite(LED_PRIVACY_BUTTON, (cameraState == ON) ? LOW : HIGH);
 
-  internetConnectionManager.begin(ssid, password, hostname, channel);
+  internetConnectionManager.begin(ssid, password, hostname);
 
   timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
@@ -137,10 +139,16 @@ void reconnectMqtt()
   if (!MQTTReconnect.ready())
     return;
 
-  if (!WiFi.isConnected()) // Need WiFi to connect to MQTT broker
+  if (!internetConnectionManager.isConnected()) // Need WiFi to connect to MQTT broker
     return;
 
-  eventLog.log("Försöker återansluta till MQTT...", EventLogger::LogLevel::INFO);
+  if (mqttReconnectAttempts++ > maxMqttReconnectAttempts)
+  {
+    eventLog.log("MQTT: För många misslyckade försök att ansluta till broker. Startar om", EventLogger::LogLevel::INFO);
+    ESP.restart();
+  }
+
+  eventLog.log("MQTT: Försöker återansluta till broker...", EventLogger::LogLevel::INFO);
   mqttClient.connect();
 }
 
@@ -148,7 +156,7 @@ void onMqttConnect(bool sessionPresent)
 {
   uint16_t packetId = mqttClient.subscribe(camera_command_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
-  mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF"); 
+  mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF");
 
   eventLog.log("MQTT: Ansluten till broker", EventLogger::LogLevel::INFO);
   eventLog.log(String("MQTT: Prenumererar på " + String(camera_command_topic)), EventLogger::LogLevel::INFO);
