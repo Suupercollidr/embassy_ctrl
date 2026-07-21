@@ -106,6 +106,8 @@ void setup()
 
   delay(1000);
 
+  eventLog.sendPendingPoints();
+
   float setupTime = millis() / 1000.0f;
   eventLog.log(String("Systemet startat. Uppstarten tog " + String(setupTime) + " s."), EventLogger::LogLevel::INFO);
 }
