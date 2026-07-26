@@ -10,7 +10,6 @@
 #include <InfluxDbClient.h>
 #include <InfluxDbCloud.h>
 #include "debounce.h"
-#include "ConnectionManager.h"
 #include "EventLogger.h"
 #include "configuration.h"
 // #include "dev_configuration.h"
@@ -19,11 +18,13 @@ WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
 InfluxDBClient influxLogClient(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_LOG_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
 EventLogger eventLog(influxLogClient, -1);
-ConnectionManager internetConnectionManager(eventLog, primaryDNS, secondaryDNS);
 
-Debounce MQTTReconnect(10000);
+bool firstConnection = true;
+
+Debounce wifiDownRestartPeriod(60000);
+Debounce mqttReconnect(10000);
 u_int8_t mqttReconnectAttempts = 0;
-u_int8_t maxMqttReconnectAttempts = 50;
+const u_int8_t maxMqttReconnectAttempts = 50;
 Debounce onboardButtonDebounce(500);
 Debounce privacyButtonDebounce(500);
 Debounce inverterPowerChangeInterval(INV_RETRY_PERIOD * 1000);
@@ -77,15 +78,14 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(PRIVACY_BUTTON), privacyButtonPush, FALLING);
 
   // Make sure relay positions match the corresponding power switch
-  digitalWrite(RELAY_INV, HIGH);                                  // NC
+  digitalWrite(RELAY_INV, LOW);                                   // NC
   digitalWrite(RELAY_LIGHT, (xmasLightState == ON) ? HIGH : LOW); // NO
   digitalWrite(RELAY_CAM, (cameraState == ON) ? LOW : HIGH);      // NC
   digitalWrite(RELAY_AUX, LOW);
   digitalWrite(LED_PRIVACY_BUTTON, (cameraState == ON) ? LOW : HIGH);
 
-  internetConnectionManager.begin(ssid, password, hostname);
-
-  timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
+  WiFi.setHostname(hostname);
+  WiFi.begin(ssid, password);
 
   // OTA
   localWebServer.on("/", []()
@@ -102,7 +102,6 @@ void setup()
   mqttClient.setCredentials(MQTT_USER, MQTT_PASS);
   mqttClient.setServer(MQTT_HOST, 1883);
   mqttClient.setWill(esp32_status_topic, 1, true, "offline");
-  mqttClient.connect();
 
   delay(1000);
 
@@ -114,13 +113,44 @@ void setup()
 
 void loop()
 {
-  internetConnectionManager.loop();
+  if (WiFi.isConnected())
+  {
+    wifiDownRestartPeriod.reset();
 
-  if (!mqttClient.connected())
-    reconnectMqtt();
+    if (NTPSyncInterval.ready() || firstConnection)
+      timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
-  localWebServer.handleClient();
-  ElegantOTA.loop();
+    if (firstConnection)
+    {
+      eventLog.log("Ansluten till WiFi", EventLogger::LogLevel::INFO);
+
+      Point netStat("Network");
+      netStat.addTag("hostname", WiFi.getHostname());
+      netStat.addTag("device", WiFi.getHostname());
+      netStat.addField("Channel", WiFi.channel());
+      netStat.addField("IP address", WiFi.localIP().toString());
+      netStat.addField("Gateway", WiFi.gatewayIP().toString());
+      netStat.addField("MAC address", WiFi.macAddress());
+      eventLog.writePoint(netStat);
+
+      mqttClient.connect();
+
+      firstConnection = false;
+    }
+
+    if (!mqttClient.connected())
+      reconnectMqtt();
+
+    localWebServer.handleClient();
+    ElegantOTA.loop();
+  }
+
+  if (!WiFi.isConnected() && wifiDownRestartPeriod.ready())
+  {
+    eventLog.log("WiFi: Kunde inte ansluta, startar om ", EventLogger::LogLevel::WARNING);
+    delay(200);
+    ESP.restart();
+  }
 
   if (onboardButtonPushed)
     onboardButtonAction();
@@ -130,23 +160,18 @@ void loop()
 
   controlCamera();
 
-  if (NTPSyncInterval.ready())
-    timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
-
   yield();
 }
 
 void reconnectMqtt()
 {
-  if (!MQTTReconnect.ready())
-    return;
-
-  if (!internetConnectionManager.isConnected()) // Need WiFi to connect to MQTT broker
+  if (!mqttReconnect.ready())
     return;
 
   if (mqttReconnectAttempts++ > maxMqttReconnectAttempts)
   {
     eventLog.log("MQTT: För många misslyckade försök att ansluta till broker. Startar om", EventLogger::LogLevel::INFO);
+    delay(200);
     ESP.restart();
   }
 
@@ -156,6 +181,7 @@ void reconnectMqtt()
 
 void onMqttConnect(bool sessionPresent)
 {
+  mqttReconnectAttempts = 0;
   uint16_t packetId = mqttClient.subscribe(camera_command_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
   mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF");
