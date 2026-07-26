@@ -17,7 +17,7 @@
 WebServer localWebServer(80);
 AsyncMqttClient mqttClient;
 InfluxDBClient influxLogClient(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_LOG_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
-EventLogger eventLog(influxLogClient, -1);
+EventLogger eventLog(influxLogClient, -1, "/system.log", hostname);
 
 bool firstConnection = true;
 
