@@ -133,6 +133,8 @@ void loop()
       netStat.addField("MAC address", WiFi.macAddress());
       eventLog.writePoint(netStat);
 
+      eventLog.sendPendingPoints();
+
       mqttClient.connect();
 
       firstConnection = false;
