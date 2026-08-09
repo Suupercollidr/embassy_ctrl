@@ -49,7 +49,7 @@ void onMqttConnect(bool sessionPresent);
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties,
                    size_t len, size_t index, size_t total);
-void controlInverter();
+void controlInverter(float batteryVoltage);
 void controlLight();
 void controlCamera();
 void IRAM_ATTR privacyButtonPush();
@@ -86,6 +86,7 @@ void setup()
 
   WiFi.setHostname(hostname);
   WiFi.begin(ssid, password);
+  influxLogClient.setHTTPOptions(HTTPOptions().httpReadTimeout(500));
 
   // OTA
   localWebServer.on("/", []()
@@ -122,7 +123,7 @@ void loop()
 
     if (firstConnection)
     {
-      eventLog.log("Ansluten till WiFi", EventLogger::LogLevel::INFO);
+      eventLog.log("Ansluten till WiFi " + String(ssid), EventLogger::LogLevel::INFO);
 
       Point netStat("Network");
       netStat.addTag("hostname", WiFi.getHostname());
@@ -184,13 +185,14 @@ void reconnectMqtt()
 void onMqttConnect(bool sessionPresent)
 {
   mqttReconnectAttempts = 0;
-  uint16_t packetId = mqttClient.subscribe(camera_command_topic, 1);
+  mqttClient.subscribe(camera_command_topic, 1);
+  mqttClient.subscribe(mppt_battery_voltage_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
   mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF");
 
   eventLog.log("MQTT: Ansluten till broker", EventLogger::LogLevel::INFO);
   eventLog.log(String("MQTT: Prenumererar på " + String(camera_command_topic)), EventLogger::LogLevel::INFO);
-  eventLog.log(String("MQTT: Subscribe packet ID " + String(packetId)), EventLogger::LogLevel::INFO);
+  eventLog.log(String("MQTT: Prenumererar på " + String(mppt_battery_voltage_topic)), EventLogger::LogLevel::INFO);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
@@ -206,47 +208,39 @@ void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties,
                    size_t len, size_t index, size_t total)
 {
-  if (strcmp(topic, camera_command_topic) != 0)
-    return;
-
-  String message;
-  for (size_t i = 0; i < len; i++)
-    message += (char)payload[i];
-
-  if (message == "ON")
+  if (strcmp(topic, camera_command_topic) == 0)
   {
-    cameraTarget = ON;
-    eventLog.log("MQTT: Kamera ON-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    String message;
+    for (size_t i = 0; i < len; i++)
+      message += (char)payload[i];
+
+    if (message == "ON")
+    {
+      cameraTarget = ON;
+      eventLog.log("MQTT: Kamera ON-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    }
+    else if (message == "OFF")
+    {
+      cameraTarget = OFF;
+      eventLog.log("MQTT: Kamera OFF-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    }
   }
-  else if (message == "OFF")
+
+  if (strcmp(topic, mppt_battery_voltage_topic) == 0)
   {
-    cameraTarget = OFF;
-    eventLog.log("MQTT: Kamera OFF-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    String message;
+    for (size_t i = 0; i < len; i++)
+      message += (char)payload[i];
+
+    float batteryVoltage = message.toFloat();
+    controlInverter(batteryVoltage);
   }
 }
 
-void controlInverter()
+void controlInverter(float voltage)
 {
   if (!inverterPowerChangeInterval.ready())
     return;
-  /*
-  const auto &intData = mpptData.getIntMap(); // Battery voltage in mV. Using MPPT voltage, since Inv. voltage = 0 when off
-
-  auto it = intData.find("V");
-  if (it == intData.end())
-  {
-    eventLog.log("Hittade ingen batterispänning från MPPT", EventLogger::LogLevel::WARNING);
-    return;
-  }
-  const int voltage = it->second;
-
-  // Do nothing on coco-bananas values (<1 V or >20 V)
-  if (voltage < 1000 || voltage > 20000)
-  {
-    String messageText = "Orealistikt spänningsvärde (" + String(voltage) + " mV), ändrar inte status på inverter";
-    eventLog.log(messageText, EventLogger::LogLevel::WARNING);
-    return;
-  }
 
   // If battery voltage is lower than off voltage, turn inverter off
   if (inverterPowerState == ON && voltage < INV_OFF_VOLTAGE)
@@ -265,7 +259,6 @@ void controlInverter()
     eventLog.log("Inverter slogs på, tillräcklig batterispänning ", EventLogger::LogLevel::INFO);
     return;
   }
-  */
 }
 
 /**
