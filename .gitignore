@@ -6,3 +6,4 @@
 src/configuration.h
 src/dev_configuration.h
 platformio.ini
+lib/.DS_Store
