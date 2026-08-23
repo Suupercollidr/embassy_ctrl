@@ -106,8 +106,6 @@ void setup()
 
   delay(1000);
 
-  eventLog.sendPendingPoints();
-
   float setupTime = millis() / 1000.0f;
   eventLog.log(String("Systemet startat. Uppstarten tog " + String(setupTime) + " s."), EventLogger::LogLevel::INFO);
 }
@@ -134,8 +132,6 @@ void loop()
       netStat.addField("MAC address", WiFi.macAddress());
       eventLog.writePoint(netStat);
 
-      eventLog.sendPendingPoints();
-
       mqttClient.connect();
 
       firstConnection = false;
@@ -146,6 +142,7 @@ void loop()
 
     localWebServer.handleClient();
     ElegantOTA.loop();
+    eventLog.maintain();
   }
 
   if (!WiFi.isConnected() && wifiDownRestartPeriod.ready())
@@ -245,7 +242,7 @@ void controlInverter(float voltage)
   // If battery voltage is lower than off voltage, turn inverter off
   if (inverterPowerState == ON && voltage < INV_OFF_VOLTAGE)
   {
-    digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn off the inverter
+    digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn the inverter OFF
     inverterPowerState = OFF;
     eventLog.log("Inverter stängdes av, låg batterispänning", EventLogger::LogLevel::INFO);
     return;
@@ -254,7 +251,7 @@ void controlInverter(float voltage)
   // If battery voltage is higher than on voltage, turn inverter on
   if (inverterPowerState == OFF && voltage > INV_ON_VOLTAGE)
   {
-    digitalWrite(RELAY_INV, LOW); // Relay is NC, so releasing it will turn on the inverter
+    digitalWrite(RELAY_INV, LOW); // Relay is NC, so releasing it will turn the inverter ON
     inverterPowerState = ON;
     eventLog.log("Inverter slogs på, tillräcklig batterispänning ", EventLogger::LogLevel::INFO);
     return;
