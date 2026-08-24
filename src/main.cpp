@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_now.h>
 #include <HTTPClient.h>
 #include <ESP32Ping.h>
 #include <WebServer.h>
@@ -11,6 +12,7 @@
 #include <InfluxDbCloud.h>
 #include "debounce.h"
 #include "EventLogger.h"
+#include "espNowTypdef.h"
 #include "configuration.h"
 // #include "dev_configuration.h"
 
@@ -20,6 +22,9 @@ InfluxDBClient influxLogClient(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_LOG_BUCKET, 
 EventLogger eventLog(influxLogClient, -1, "/system.log", hostname);
 
 bool firstConnection = true;
+
+volatile ControlUnitData receivedClimateData{};
+volatile bool newClimateDataAvailable = false;
 
 Debounce wifiDownRestartPeriod(60000);
 Debounce mqttReconnect(10000);
@@ -56,6 +61,8 @@ void IRAM_ATTR privacyButtonPush();
 void privacyButtonAction();
 void IRAM_ATTR onboardButtonPush();
 void onboardButtonAction();
+void onEspNowDataReceived(const uint8_t *mac_addr, const uint8_t *incomingData, int len);
+
 
 void setup()
 {
@@ -84,6 +91,7 @@ void setup()
   digitalWrite(RELAY_AUX, LOW);
   digitalWrite(LED_PRIVACY_BUTTON, (cameraState == ON) ? LOW : HIGH);
 
+  WiFi.mode(WIFI_STA);
   WiFi.setHostname(hostname);
   WiFi.begin(ssid, password);
   influxLogClient.setHTTPOptions(HTTPOptions().httpReadTimeout(500));
@@ -134,11 +142,27 @@ void loop()
 
       mqttClient.connect();
 
+      if (esp_now_init() != ESP_OK)
+        eventLog.log("ESP-NOW: Fel vid initialization");
+
+      esp_now_register_recv_cb(onEspNowDataReceived);
+
       firstConnection = false;
     }
 
     if (!mqttClient.connected())
       reconnectMqtt();
+
+    if (newClimateDataAvailable)
+    {
+      newClimateDataAvailable = false;
+
+      ControlUnitData dataCopy;
+      memcpy(&dataCopy, (void *)&receivedClimateData, sizeof(ControlUnitData));
+
+      String recievedClimateMessage = "Kylskåpstemp: " + String(dataCopy.refrigeratorTemp) + " d°C, MPPT V: " + String(dataCopy.mpptV) + " mV, MPPT VPV: " + String(dataCopy.mpptVPV) + " mV";
+      eventLog.log(recievedClimateMessage, EventLogger::LogLevel::INFO);
+    }
 
     localWebServer.handleClient();
     ElegantOTA.loop();
@@ -359,4 +383,17 @@ void privacyButtonAction()
   privacyButtonPushed = false;
   cameraTarget = (cameraTarget == ON) ? OFF : ON;
   eventLog.log("Privacy button pushed", EventLogger::LogLevel::INFO, true);
+}
+
+
+void onEspNowDataReceived(const uint8_t *mac_addr, const uint8_t *incomingData, int len)
+{
+  if (len != sizeof(ControlUnitData))
+  {
+    eventLog.log("ESP-NOW: Fel storlek på mottagen data, ignorerar", EventLogger::LogLevel::DATA);
+    return;
+  }
+
+  memcpy((void *)&receivedClimateData, incomingData, sizeof(ControlUnitData));
+  newClimateDataAvailable = true;
 }
