@@ -207,7 +207,7 @@ void onMqttConnect(bool sessionPresent)
 {
   mqttReconnectAttempts = 0;
   mqttClient.subscribe(camera_command_topic, 1);
-  mqttClient.subscribe(fridge_command_topic, 1);
+  mqttClient.subscribe(inverter_power_command_topic, 1);
   mqttClient.subscribe(mppt_battery_voltage_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
   mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF");
@@ -258,7 +258,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
     controlInverter();
   }
 
-  if (strcmp(topic, fridge_command_topic) == 0)
+  if (strcmp(topic, inverter_power_command_topic) == 0)
   {
     String message;
     for (size_t i = 0; i < len; i++)
@@ -291,17 +291,19 @@ void controlInverter()
   case ON:
     digitalWrite(RELAY_INV, LOW); // Relay is NC, so releasing it will turn the inverter ON
     inverterPowerState = ON;
+    mqttClient.publish(inverter_power_state_topic, 1, true, "ON");
     eventLog.log("Inverter slogs på, tillräcklig batterispänning ", EventLogger::LogLevel::INFO);
     break;
-
-  case OFF:
-      digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn the inverter OFF
+    
+    case OFF:
+    digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn the inverter OFF
     inverterPowerState = OFF;
+    mqttClient.publish(inverter_power_state_topic, 1, true, "OFF");
     eventLog.log("Inverter stängdes av, låg batterispänning", EventLogger::LogLevel::INFO);
     break;
 
   default:
-      Serial.print("Inverter power target was ");
+    Serial.print("Inverter power target was ");
     Serial.println(inverterPowerTarget);
     break;
   }
