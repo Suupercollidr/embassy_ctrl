@@ -46,6 +46,7 @@ volatile bool onboardButtonPushed;
 volatile bool privacyButtonPushed;
 volatile powerSwitch cameraTarget = ON;
 powerSwitch cameraState = ON;
+volatile powerSwitch inverterPowerTarget = ON;
 powerSwitch inverterPowerState = ON;
 powerSwitch xmasLightState = OFF;
 
@@ -54,7 +55,7 @@ void onMqttConnect(bool sessionPresent);
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties,
                    size_t len, size_t index, size_t total);
-void controlInverter(float batteryVoltage);
+void controlInverter();
 void controlLight();
 void controlCamera();
 void IRAM_ATTR privacyButtonPush();
@@ -62,7 +63,6 @@ void privacyButtonAction();
 void IRAM_ATTR onboardButtonPush();
 void onboardButtonAction();
 void onEspNowDataReceived(const uint8_t *mac_addr, const uint8_t *incomingData, int len);
-
 
 void setup()
 {
@@ -207,6 +207,7 @@ void onMqttConnect(bool sessionPresent)
 {
   mqttReconnectAttempts = 0;
   mqttClient.subscribe(camera_command_topic, 1);
+  mqttClient.subscribe(fridge_command_topic, 1);
   mqttClient.subscribe(mppt_battery_voltage_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
   mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF");
@@ -254,65 +255,56 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       message += (char)payload[i];
 
     float batteryVoltage = message.toFloat();
-    controlInverter(batteryVoltage);
+    controlInverter();
+  }
+
+  if (strcmp(topic, fridge_command_topic) == 0)
+  {
+    String message;
+    for (size_t i = 0; i < len; i++)
+      message += (char)payload[i];
+    if (message == "ON")
+    {
+      inverterPowerTarget = ON;
+      eventLog.log("MQTT: Inverter ON-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    }
+    else if (message == "OFF")
+    {
+      inverterPowerTarget = OFF;
+      eventLog.log("MQTT: Inverter OFF-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    }
   }
 }
 
-void controlInverter(float voltage)
+void controlInverter()
 {
+  if (inverterPowerState == inverterPowerTarget)
+    return;
+
   if (!inverterPowerChangeInterval.ready())
     return;
 
-  // If battery voltage is lower than off voltage, turn inverter off
-  if (inverterPowerState == ON && voltage < INV_OFF_VOLTAGE)
-  {
-    digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn the inverter OFF
-    inverterPowerState = OFF;
-    eventLog.log("Inverter stängdes av, låg batterispänning", EventLogger::LogLevel::INFO);
-    return;
-  }
+  inverterPowerState = inverterPowerTarget;
 
-  // If battery voltage is higher than on voltage, turn inverter on
-  if (inverterPowerState == OFF && voltage > INV_ON_VOLTAGE)
+  switch (inverterPowerState)
   {
+  case ON:
     digitalWrite(RELAY_INV, LOW); // Relay is NC, so releasing it will turn the inverter ON
     inverterPowerState = ON;
     eventLog.log("Inverter slogs på, tillräcklig batterispänning ", EventLogger::LogLevel::INFO);
-    return;
+    break;
+
+  case OFF:
+      digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn the inverter OFF
+    inverterPowerState = OFF;
+    eventLog.log("Inverter stängdes av, låg batterispänning", EventLogger::LogLevel::INFO);
+    break;
+
+  default:
+      Serial.print("Inverter power target was ");
+    Serial.println(inverterPowerTarget);
+    break;
   }
-}
-
-/**
- * @brief Turns on light (by triggering a relay) when the following conditions are met:
- *        - It is christmas time (between December 1 and January 13)
- *        - It is daytime (between 08:00 and 20:00)
- *        - It is dark (the panel voltage of the photovoltaic panel is < 5000 mV)
- */
-void controlLight()
-{
-  /*
-  const auto &intData = mpptData.getIntMap(); // Contains panel voltage (VPV) in mV
-
-  auto it = intData.find("VPV");
-  if (it == intData.end())
-  {
-    eventLog.log("Hittade ingen panelspänning från MPPT", EventLogger::LogLevel::WARNING);
-    return;
-  }
-
-  const int panelVoltage = it->second;
-
-  time(&now);
-  struct tm *timeinfo = localtime(&now);
-
-  const bool isXmas = (timeinfo->tm_mon == 11 && timeinfo->tm_mday >= 1) || (timeinfo->tm_mon == 0 && timeinfo->tm_mday <= 13);
-  const bool isDark = (panelVoltage < 5000);
-  const bool isDay = (timeinfo->tm_hour >= 8) && (timeinfo->tm_hour < 20);
-
-  xmasLightState = (isXmas && isDark && isDay) ? ON : OFF;
-
-  xmasLightState ? digitalWrite(RELAY_LIGHT, HIGH) : digitalWrite(RELAY_LIGHT, LOW);
-  */
 }
 
 void controlCamera()
@@ -384,7 +376,6 @@ void privacyButtonAction()
   cameraTarget = (cameraTarget == ON) ? OFF : ON;
   eventLog.log("Privacy button pushed", EventLogger::LogLevel::INFO, true);
 }
-
 
 void onEspNowDataReceived(const uint8_t *mac_addr, const uint8_t *incomingData, int len)
 {
