@@ -23,8 +23,8 @@ EventLogger eventLog(influxLogClient, -1, "/system.log", hostname);
 
 bool firstConnection = true;
 
-volatile ControlUnitData receivedClimateData{};
-volatile bool newClimateDataAvailable = false;
+volatile InverterAction receivedInverterCommand = InverterAction::NO_CHANGE;
+volatile bool newInverterCommandAvailable = false;
 
 Debounce wifiDownRestartPeriod(60000);
 Debounce mqttReconnect(10000);
@@ -38,7 +38,8 @@ Debounce NTPSyncInterval(NTP_SYNC_INTERVAL * 3600000);
 enum powerSwitch
 {
   OFF,
-  ON
+  ON,
+  AUTO
 };
 
 bool onboardLEDState;
@@ -46,8 +47,9 @@ volatile bool onboardButtonPushed;
 volatile bool privacyButtonPushed;
 volatile powerSwitch cameraTarget = ON;
 powerSwitch cameraState = ON;
-volatile powerSwitch inverterPowerTarget = ON;
+volatile powerSwitch inverterPowerMode = ON;
 powerSwitch inverterPowerState = ON;
+powerSwitch inverterPowerTarget = ON;
 powerSwitch xmasLightState = OFF;
 
 void reconnectMqtt();
@@ -153,17 +155,6 @@ void loop()
     if (!mqttClient.connected())
       reconnectMqtt();
 
-    if (newClimateDataAvailable)
-    {
-      newClimateDataAvailable = false;
-
-      ControlUnitData dataCopy;
-      memcpy(&dataCopy, (void *)&receivedClimateData, sizeof(ControlUnitData));
-
-      String recievedClimateMessage = "Kylskåpstemp: " + String(dataCopy.refrigeratorTemp) + " d°C, MPPT V: " + String(dataCopy.mpptV) + " mV, MPPT VPV: " + String(dataCopy.mpptVPV) + " mV";
-      eventLog.log(recievedClimateMessage, EventLogger::LogLevel::INFO);
-    }
-
     localWebServer.handleClient();
     ElegantOTA.loop();
     eventLog.maintain();
@@ -183,6 +174,7 @@ void loop()
     privacyButtonAction();
 
   controlCamera();
+  controlInverter();
 
   yield();
 }
@@ -207,14 +199,13 @@ void onMqttConnect(bool sessionPresent)
 {
   mqttReconnectAttempts = 0;
   mqttClient.subscribe(camera_command_topic, 1);
-  mqttClient.subscribe(inverter_power_command_topic, 1);
-  mqttClient.subscribe(mppt_battery_voltage_topic, 1);
+  mqttClient.subscribe(inverter_mode_command_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
   mqttClient.publish(camera_state_topic, 1, true, cameraState == ON ? "ON" : "OFF");
+  mqttClient.publish(inverter_power_state_topic, 1, true, inverterPowerState == ON ? "ON" : "OFF");
 
   eventLog.log("MQTT: Ansluten till broker", EventLogger::LogLevel::INFO);
   eventLog.log(String("MQTT: Prenumererar på " + String(camera_command_topic)), EventLogger::LogLevel::INFO);
-  eventLog.log(String("MQTT: Prenumererar på " + String(mppt_battery_voltage_topic)), EventLogger::LogLevel::INFO);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
@@ -248,63 +239,78 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
     }
   }
 
-  if (strcmp(topic, mppt_battery_voltage_topic) == 0)
-  {
-    String message;
-    for (size_t i = 0; i < len; i++)
-      message += (char)payload[i];
-
-    float batteryVoltage = message.toFloat();
-    controlInverter();
-  }
-
-  if (strcmp(topic, inverter_power_command_topic) == 0)
+  if (strcmp(topic, inverter_mode_command_topic) == 0)
   {
     String message;
     for (size_t i = 0; i < len; i++)
       message += (char)payload[i];
     if (message == "ON")
     {
-      inverterPowerTarget = ON;
+      inverterPowerMode = ON;
       eventLog.log("MQTT: Inverter ON-kommando mottaget", EventLogger::LogLevel::INFO, true);
     }
     else if (message == "OFF")
     {
-      inverterPowerTarget = OFF;
+      inverterPowerMode = OFF;
       eventLog.log("MQTT: Inverter OFF-kommando mottaget", EventLogger::LogLevel::INFO, true);
+    }
+    else if (message == "AUTO")
+    {
+      inverterPowerMode = AUTO;
+      eventLog.log("MQTT: Inverter AUTO-kommando mottaget", EventLogger::LogLevel::INFO, true);
     }
   }
 }
 
 void controlInverter()
 {
+  if (inverterPowerMode == ON)
+    inverterPowerTarget = ON;
+
+  if (inverterPowerMode == OFF)
+    inverterPowerTarget = OFF;
+
+  if (inverterPowerMode == AUTO)
+  {
+    switch (receivedInverterCommand)
+    {
+    case InverterAction::TURN_ON:
+      inverterPowerTarget = ON;
+      break;
+    case InverterAction::TURN_OFF:
+      inverterPowerTarget = OFF;
+      break;
+
+    default:
+      break;
+    }
+  }
+
   if (inverterPowerState == inverterPowerTarget)
     return;
 
   if (!inverterPowerChangeInterval.ready())
     return;
 
-  inverterPowerState = inverterPowerTarget;
-
-  switch (inverterPowerState)
+  switch (inverterPowerTarget)
   {
   case ON:
     digitalWrite(RELAY_INV, LOW); // Relay is NC, so releasing it will turn the inverter ON
     inverterPowerState = ON;
     mqttClient.publish(inverter_power_state_topic, 1, true, "ON");
-    eventLog.log("Inverter slogs på, tillräcklig batterispänning ", EventLogger::LogLevel::INFO);
+    eventLog.log("Inverter slogs på ", EventLogger::LogLevel::INFO);
     break;
-    
-    case OFF:
+
+  case OFF:
     digitalWrite(RELAY_INV, HIGH); // Relay is NC, so triggering it will turn the inverter OFF
     inverterPowerState = OFF;
     mqttClient.publish(inverter_power_state_topic, 1, true, "OFF");
-    eventLog.log("Inverter stängdes av, låg batterispänning", EventLogger::LogLevel::INFO);
+    eventLog.log("Inverter stängdes av", EventLogger::LogLevel::INFO);
     break;
 
   default:
     Serial.print("Inverter power target was ");
-    Serial.println(inverterPowerTarget);
+    Serial.println(inverterPowerMode);
     break;
   }
 }
@@ -381,12 +387,14 @@ void privacyButtonAction()
 
 void onEspNowDataReceived(const uint8_t *mac_addr, const uint8_t *incomingData, int len)
 {
-  if (len != sizeof(ControlUnitData))
+  if (len != sizeof(InverterMessage))
   {
     eventLog.log("ESP-NOW: Fel storlek på mottagen data, ignorerar", EventLogger::LogLevel::DATA);
     return;
   }
 
-  memcpy((void *)&receivedClimateData, incomingData, sizeof(ControlUnitData));
-  newClimateDataAvailable = true;
+  InverterMessage msg;
+  memcpy(&msg, incomingData, sizeof(InverterMessage));
+  receivedInverterCommand = msg.action;
+  newInverterCommandAvailable = true;
 }

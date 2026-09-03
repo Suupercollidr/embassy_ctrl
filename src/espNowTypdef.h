@@ -1,6 +1,10 @@
-typedef struct
+enum class InverterAction
 {
-  int refrigeratorTemp;
-  int mpptV;
-  int mpptVPV;
-} ControlUnitData;
+  TURN_ON,  // Slå på invertern
+  TURN_OFF, // Slå av invertern
+  NO_CHANGE // Behåll nuvarande status
+};
+
+struct InverterMessage {
+    InverterAction action;
+};
