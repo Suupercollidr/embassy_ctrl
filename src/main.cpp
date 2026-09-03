@@ -21,15 +21,15 @@ AsyncMqttClient mqttClient;
 InfluxDBClient influxLogClient(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_LOG_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
 EventLogger eventLog(influxLogClient, -1, "/system.log", hostname);
 
-bool firstConnection = true;
+volatile bool firstConnection = true;
+volatile bool hasConnectionProblem = true;
+volatile bool connectionProblemIsNew = false;
+Debounce connectionProblemsTimeout(30 * 60 * 1000); // half an hour
 
 volatile InverterAction receivedInverterCommand = InverterAction::NO_CHANGE;
 volatile bool newInverterCommandAvailable = false;
 
-Debounce wifiDownRestartPeriod(60000);
 Debounce mqttReconnect(10000);
-u_int8_t mqttReconnectAttempts = 0;
-const u_int8_t maxMqttReconnectAttempts = 50;
 Debounce onboardButtonDebounce(500);
 Debounce privacyButtonDebounce(500);
 Debounce inverterPowerChangeInterval(INV_RETRY_PERIOD * 1000);
@@ -57,6 +57,7 @@ void onMqttConnect(bool sessionPresent);
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties,
                    size_t len, size_t index, size_t total);
+void onWifiEvent(WiFiEvent_t event);
 void controlInverter();
 void controlLight();
 void controlCamera();
@@ -95,6 +96,7 @@ void setup()
 
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(hostname);
+  WiFi.onEvent(onWifiEvent);
   WiFi.begin(ssid, password);
   influxLogClient.setHTTPOptions(HTTPOptions().httpReadTimeout(500));
 
@@ -122,10 +124,20 @@ void setup()
 
 void loop()
 {
+  if (hasConnectionProblem)
+  {
+    if (connectionProblemIsNew)
+    {
+      connectionProblemsTimeout.reset();
+      connectionProblemIsNew = false;
+    }
+
+    if (connectionProblemsTimeout.ready())
+      ESP.restart();
+  }
+
   if (WiFi.isConnected())
   {
-    wifiDownRestartPeriod.reset();
-
     if (NTPSyncInterval.ready() || firstConnection)
       timeSync(TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 
@@ -160,13 +172,6 @@ void loop()
     eventLog.maintain();
   }
 
-  if (!WiFi.isConnected() && wifiDownRestartPeriod.ready())
-  {
-    eventLog.log("WiFi: Kunde inte ansluta, startar om ", EventLogger::LogLevel::WARNING);
-    delay(200);
-    ESP.restart();
-  }
-
   if (onboardButtonPushed)
     onboardButtonAction();
 
@@ -179,25 +184,32 @@ void loop()
   yield();
 }
 
+void onWifiEvent(WiFiEvent_t event)
+{
+  switch (event)
+  {
+  case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+    hasConnectionProblem = true;
+    break;
+
+  default:
+    break;
+  }
+}
+
 void reconnectMqtt()
 {
   if (!mqttReconnect.ready())
     return;
 
-  if (mqttReconnectAttempts++ > maxMqttReconnectAttempts)
-  {
-    eventLog.log("MQTT: För många misslyckade försök att ansluta till broker. Startar om", EventLogger::LogLevel::INFO);
-    delay(200);
-    ESP.restart();
-  }
-
-  eventLog.log("MQTT: Försöker återansluta till broker...", EventLogger::LogLevel::INFO);
   mqttClient.connect();
 }
 
 void onMqttConnect(bool sessionPresent)
 {
-  mqttReconnectAttempts = 0;
+  hasConnectionProblem = false;
+  connectionProblemIsNew = true;
+
   mqttClient.subscribe(camera_command_topic, 1);
   mqttClient.subscribe(inverter_mode_command_topic, 1);
   mqttClient.publish(esp32_status_topic, 1, true, "online");
@@ -210,6 +222,8 @@ void onMqttConnect(bool sessionPresent)
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 {
+  hasConnectionProblem = true;
+
   String message = "Frånkopplad från MQTT-broker p.g.a.: ";
   message += static_cast<int>(reason);
   eventLog.log(message, EventLogger::LogLevel::WARNING);
