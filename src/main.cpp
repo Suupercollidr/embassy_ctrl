@@ -252,25 +252,28 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       eventLog.log("MQTT: Kamera OFF-kommando mottaget", EventLogger::LogLevel::INFO, true);
     }
   }
-
+  
   if (strcmp(topic, inverter_mode_command_topic) == 0)
   {
     String message;
     for (size_t i = 0; i < len; i++)
-      message += (char)payload[i];
+    message += (char)payload[i];
     if (message == "ON")
     {
       inverterPowerMode = ON;
+      mqttClient.publish(inverter_mode_state_topic, 1, true, "ON");
       eventLog.log("MQTT: Inverter ON-kommando mottaget", EventLogger::LogLevel::INFO, true);
     }
     else if (message == "OFF")
     {
       inverterPowerMode = OFF;
+      mqttClient.publish(inverter_mode_state_topic, 1, true, "OFF");
       eventLog.log("MQTT: Inverter OFF-kommando mottaget", EventLogger::LogLevel::INFO, true);
     }
     else if (message == "AUTO")
     {
       inverterPowerMode = AUTO;
+      mqttClient.publish(inverter_mode_state_topic, 1, true, "AUTO");
       eventLog.log("MQTT: Inverter AUTO-kommando mottaget", EventLogger::LogLevel::INFO, true);
     }
   }
@@ -336,9 +339,6 @@ void controlCamera()
 
   cameraState = cameraTarget;
 
-  Serial.println("Camera state change");
-  Serial.print("Camera target is: ");
-  Serial.println(cameraTarget);
   switch (cameraState)
   {
   case ON:
