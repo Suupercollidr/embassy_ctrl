@@ -35,10 +35,14 @@ const char *MQTT_PASS = "MQTT_PASSWORD";
 const char *camera_command_topic = "home/security/cameras/command";
 const char *camera_state_topic = "home/security/cameras/state";
 const char *esp32_status_topic = "home/automation/esp32/status";
+const char *inverter_mode_command_topic = "home/power/inverter/remote_switch/command";
+const char *inverter_mode_state_topic = "home/power/inverter/remote_switch/state";
+const char *inverter_power_state_topic = "home/power/inverter/power_status/state";
 
-const int INV_OFF_VOLTAGE = 11000; // mV
-const int INV_ON_VOLTAGE = 13000;  // mV
-const int INV_RETRY_PERIOD = 1800; // seconds
+
+const float INV_OFF_VOLTAGE = 11.0; // V
+const float INV_ON_VOLTAGE = 13.0;  // V
+const int INV_RETRY_PERIOD = 1800; // seconds // Don't restart too often, because inverter isn't powerful enough to overcome backpreassure in the compressor  
 
 #define ONBOARD_BUTTON 0
 #define ONBOARD_LED 38
